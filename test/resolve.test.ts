@@ -95,7 +95,7 @@ describe('resolvePlan', () => {
       workingDirectory: '.',
       android: { runner: 'ubuntu-latest', outputs: ['apk', 'aab'] },
       ios: { runner: 'macos-latest', xcode: null },
-      env: { vars: ['EXPO_PUBLIC_*'], secrets: [] },
+      env: { vars: ['EXPO_PUBLIC_*'] },
     });
   });
 

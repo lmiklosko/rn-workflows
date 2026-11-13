@@ -81,7 +81,7 @@ jobs:
 
           "$APKSIGNER" verify --print-certs "$APK"
           APK_SHA=$("$APKSIGNER" verify --print-certs "$APK" \
-            | grep 'Signer #1 certificate SHA-256 digest:' | sed 's/.*digest://' | normalise)
+            | grep 'certificate SHA-256 digest:' | head -n 1 | sed 's/.*digest://' | normalise)
           AAB_SHA=$(keytool -printcert -jarfile "$AAB" \
             | grep 'SHA256:' | head -n 1 | sed 's/.*SHA256://' | normalise)
 

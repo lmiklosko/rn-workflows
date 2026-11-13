@@ -40,7 +40,8 @@ export interface BuildPlan {
   android: { enabled: boolean; runner: Runner; outputs: AndroidOutput[] };
   ios: { enabled: boolean; runner: Runner; xcode: string | null };
   deliver: DeliverConfig;
-  env: { vars: string[]; secrets: string[] };
+  /** Environment variable name patterns exposed to the build. Secrets arrive via the APP_ENV secret. */
+  env: { vars: string[] };
   artifacts: string[];
   hooks: { prePrebuild: string | null; postPrebuild: string | null; postBuild: string | null };
   notify: { slack: boolean; teams: boolean };
@@ -219,7 +220,6 @@ export function resolvePlan({ config, hasConfigFile, inputs, runNumber }: Resolv
     deliver,
     env: {
       vars: config.env?.vars ?? ['EXPO_PUBLIC_*'],
-      secrets: config.env?.secrets ?? [],
     },
     artifacts: config.artifacts ?? [],
     hooks: {

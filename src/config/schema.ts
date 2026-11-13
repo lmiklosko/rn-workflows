@@ -89,10 +89,6 @@ export const configSchema = z.strictObject({
         .array(z.string())
         .optional()
         .describe('Environment variables to expose to the build. `*` wildcards allowed.'),
-      secrets: z
-        .array(z.string())
-        .optional()
-        .describe('Secrets to expose to the build, by exact name.'),
     })
     .optional(),
   artifacts: z

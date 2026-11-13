@@ -75,13 +75,6 @@
           "items": {
             "type": "string"
           }
-        },
-        "secrets": {
-          "description": "Secrets to expose to the build, by exact name.",
-          "type": "array",
-          "items": {
-            "type": "string"
-          }
         }
       },
       "additionalProperties": false
