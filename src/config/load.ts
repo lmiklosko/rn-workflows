@@ -1,16 +1,12 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { z } from 'zod';
+import { UserError } from '../errors.js';
 import { configSchema, type Config } from './schema.js';
 
 export const DEFAULT_CONFIG_FILE = 'rn-workflows.json';
 
-export class ConfigError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = 'ConfigError';
-  }
-}
+export class ConfigError extends UserError {}
 
 export function parseConfig(raw: unknown, source = DEFAULT_CONFIG_FILE): Config {
   const result = configSchema.safeParse(raw);

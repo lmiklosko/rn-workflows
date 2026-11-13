@@ -1,0 +1,139 @@
+name: Set up the app workspace
+description: Detects the package manager, sets up Node, and installs dependencies from the lockfile.
+
+inputs:
+  working-directory:
+    description: Directory of the Expo app, relative to the repo root.
+    default: '.'
+  node-version:
+    description: Node version. When empty, .nvmrc or .node-version is used if present.
+    default: ''
+
+outputs:
+  package-manager:
+    description: npm, pnpm, yarn or bun.
+    value: ${{ steps.detect.outputs.package-manager }}
+  exec:
+    description: Command prefix that runs a binary from the app's dependencies, e.g. `pnpm exec`.
+    value: ${{ steps.detect.outputs.exec }}
+  install-directory:
+    description: Directory holding the lockfile, relative to the repo root.
+    value: ${{ steps.detect.outputs.install-directory }}
+
+runs:
+  using: composite
+  steps:
+    # The lockfile may sit above the app in a workspace, so walk up from the app
+    # directory to the repo root and install where the lockfile is.
+    - name: Detect package manager
+      id: detect
+      shell: bash
+      env:
+        APP_DIR: ${{ inputs.working-directory }}
+      run: |
+        set -euo pipefail
+        ROOT="$(pwd -P)"
+        if [ ! -d "$APP_DIR" ]; then
+          echo "::error::Working directory '$APP_DIR' does not exist in this repository."
+          exit 1
+        fi
+        APP="$(cd "$APP_DIR" && pwd -P)"
+
+        DIR="$APP"; PM=""; LOCK=""
+        while :; do
+          if   [ -f "$DIR/pnpm-lock.yaml" ];    then PM=pnpm; LOCK=pnpm-lock.yaml
+          elif [ -f "$DIR/yarn.lock" ];         then PM=yarn; LOCK=yarn.lock
+          elif [ -f "$DIR/bun.lock" ];          then PM=bun;  LOCK=bun.lock
+          elif [ -f "$DIR/bun.lockb" ];         then PM=bun;  LOCK=bun.lockb
+          elif [ -f "$DIR/package-lock.json" ]; then PM=npm;  LOCK=package-lock.json
+          fi
+          [ -n "$PM" ] && break
+          [ "$DIR" = "$ROOT" ] && break
+          DIR="$(dirname "$DIR")"
+        done
+        if [ -z "$PM" ]; then
+          echo "::error::No lockfile found between '$APP_DIR' and the repo root. Commit package-lock.json, pnpm-lock.yaml, yarn.lock or bun.lock."
+          exit 1
+        fi
+
+        rel() { local p="${1#"$ROOT"}"; p="${p#/}"; echo "${p:-.}"; }
+        INSTALL_DIR="$(rel "$DIR")"
+
+        NODE_FILE=""
+        for candidate in "$APP/.nvmrc" "$APP/.node-version" "$DIR/.nvmrc" "$DIR/.node-version" "$ROOT/.nvmrc" "$ROOT/.node-version"; do
+          if [ -f "$candidate" ]; then NODE_FILE="$(rel "$candidate")"; break; fi
+        done
+
+        case "$PM" in
+          npm)  EXEC="npx --no-install"; CACHE=npm ;;
+          pnpm) EXEC="pnpm exec";        CACHE=pnpm ;;
+          yarn) EXEC="yarn";             CACHE=yarn ;;
+          bun)  EXEC="bunx";             CACHE="" ;;
+        esac
+
+        PINNED=false
+        if grep -q '"packageManager"' "$DIR/package.json" 2>/dev/null; then PINNED=true; fi
+
+        {
+          echo "package-manager=$PM"
+          echo "exec=$EXEC"
+          echo "cache=$CACHE"
+          echo "install-directory=$INSTALL_DIR"
+          echo "lockfile=$INSTALL_DIR/$LOCK"
+          echo "node-version-file=$NODE_FILE"
+          echo "pinned=$PINNED"
+        } >> "$GITHUB_OUTPUT"
+        echo "Package manager: $PM (lockfile $INSTALL_DIR/$LOCK)"
+
+    # pnpm has to exist before setup-node can find its cache directory.
+    - name: Set up pnpm (version from packageManager)
+      if: steps.detect.outputs.package-manager == 'pnpm' && steps.detect.outputs.pinned == 'true'
+      uses: pnpm/action-setup@v4
+      with:
+        package_json_file: ${{ steps.detect.outputs.install-directory }}/package.json
+
+    - name: Set up pnpm
+      if: steps.detect.outputs.package-manager == 'pnpm' && steps.detect.outputs.pinned != 'true'
+      uses: pnpm/action-setup@v4
+      with:
+        version: 10
+
+    - name: Set up Bun
+      if: steps.detect.outputs.package-manager == 'bun'
+      uses: oven-sh/setup-bun@v2
+
+    - name: Enable Corepack for Yarn
+      if: steps.detect.outputs.package-manager == 'yarn'
+      shell: bash
+      run: corepack enable
+
+    - name: Set up Node
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ inputs.node-version }}
+        node-version-file: ${{ inputs.node-version == '' && steps.detect.outputs.node-version-file || '' }}
+        cache: ${{ steps.detect.outputs.cache }}
+        cache-dependency-path: ${{ steps.detect.outputs.lockfile }}
+
+    # NODE_ENV is cleared for the install: with `production`, package managers
+    # skip devDependencies, which the Expo CLI and Metro config usually are.
+    - name: Install dependencies
+      shell: bash
+      working-directory: ${{ steps.detect.outputs.install-directory }}
+      env:
+        PM: ${{ steps.detect.outputs.package-manager }}
+        NODE_ENV: ''
+      run: |
+        set -euo pipefail
+        case "$PM" in
+          npm)  npm ci --no-audit --no-fund ;;
+          pnpm) pnpm install --frozen-lockfile ;;
+          bun)  bun install --frozen-lockfile ;;
+          yarn)
+            if [ "$(yarn --version | cut -d. -f1)" = "1" ]; then
+              yarn install --frozen-lockfile
+            else
+              yarn install --immutable
+            fi
+            ;;
+        esac

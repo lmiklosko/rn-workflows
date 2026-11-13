@@ -1,0 +1,254 @@
+name: Build
+
+# Reusable build pipeline for Expo apps. Call it from an app repository:
+#
+#   jobs:
+#     build:
+#       uses: lmiklosko/rn-workflows/.github/workflows/build.yml@main
+#       with:
+#         profile: production
+#         platform: android
+#       secrets:
+#         ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+#         ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+#         ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+#         ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+#
+# Secrets are read from the GitHub Environment named after the profile. They
+# must be passed by name as above: `secrets: inherit` is ignored when the
+# calling repository has a different owner (see docs/spikes.md).
+#
+# Every input is a string, and an empty string means "not set, use the config
+# file". A boolean input would arrive as `false` when omitted and wrongly
+# override a `true` in the config file.
+
+on:
+  workflow_call:
+    inputs:
+      profile:
+        description: Build profile, which is also the GitHub Environment holding its secrets. Leave empty for an unsigned verification build.
+        type: string
+        default: ''
+      platform:
+        description: ios, android or all.
+        type: string
+        default: all
+      signing:
+        description: auto signs when a profile is given; none forces an unsigned build.
+        type: string
+        default: auto
+      deliver:
+        description: Comma-separated delivery targets (firebase, testflight, play), or none. Overrides the profile.
+        type: string
+        default: ''
+      submit-for-review:
+        description: true or false. Overrides the profile.
+        type: string
+        default: ''
+      android-runner:
+        description: Runner label, or a JSON array of labels, for the Android job.
+        type: string
+        default: ''
+      ios-runner:
+        description: Runner label, or a JSON array of labels, for the iOS job.
+        type: string
+        default: ''
+      xcode-version:
+        type: string
+        default: ''
+      node-version:
+        type: string
+        default: ''
+      working-directory:
+        description: Directory of the Expo app, relative to the repo root.
+        type: string
+        default: ''
+      config-path:
+        description: Path of the config file. Defaults to rn-workflows.json at the repo root, which is optional.
+        type: string
+        default: ''
+      build-number-offset:
+        description: Added to the run number to form the build number.
+        type: string
+        default: ''
+      artifact-retention-days:
+        type: string
+        default: ''
+    secrets:
+      ANDROID_KEYSTORE_BASE64:
+        required: false
+      ANDROID_KEYSTORE_PASSWORD:
+        required: false
+      ANDROID_KEY_ALIAS:
+        required: false
+      ANDROID_KEY_PASSWORD:
+        required: false
+      APP_ENV:
+        description: dotenv content exported to the app's prebuild and build.
+        required: false
+    outputs:
+      version:
+        description: Marketing version of the app.
+        value: ${{ jobs.resolve.outputs.version }}
+      build-number:
+        description: Build number stamped on every platform in this run.
+        value: ${{ jobs.resolve.outputs.build-number }}
+      android-artifact:
+        description: Name of the run artifact holding the Android build, empty when Android was not built.
+        value: ${{ jobs.android.outputs.artifact }}
+
+permissions:
+  contents: read
+
+jobs:
+  resolve:
+    name: Resolve build plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      plan: ${{ steps.plan.outputs.plan }}
+      version: ${{ steps.plan.outputs.version }}
+      build-number: ${{ steps.plan.outputs.build-number }}
+      profile: ${{ steps.plan.outputs.profile }}
+      environment: ${{ steps.plan.outputs.environment }}
+      signing: ${{ steps.plan.outputs.signing }}
+      working-directory: ${{ steps.plan.outputs.working-directory }}
+      android: ${{ steps.plan.outputs.android }}
+      ios: ${{ steps.plan.outputs.ios }}
+      android-runner: ${{ steps.plan.outputs.android-runner }}
+      ios-runner: ${{ steps.plan.outputs.ios-runner }}
+      android-gradle-tasks: ${{ steps.plan.outputs.android-gradle-tasks }}
+      extra-artifact-paths: ${{ steps.plan.outputs.extra-artifact-paths }}
+      artifact-retention-days: ${{ steps.plan.outputs.artifact-retention-days }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install rn-workflows
+        uses: lmiklosko/rn-workflows/actions/cli@main
+
+      - name: Resolve
+        id: plan
+        run: rn-workflows ci resolve
+        env:
+          INPUT_PROFILE: ${{ inputs.profile }}
+          INPUT_PLATFORM: ${{ inputs.platform }}
+          INPUT_SIGNING: ${{ inputs.signing }}
+          INPUT_DELIVER: ${{ inputs.deliver }}
+          INPUT_SUBMIT_FOR_REVIEW: ${{ inputs.submit-for-review }}
+          INPUT_ANDROID_RUNNER: ${{ inputs.android-runner }}
+          INPUT_IOS_RUNNER: ${{ inputs.ios-runner }}
+          INPUT_XCODE_VERSION: ${{ inputs.xcode-version }}
+          INPUT_NODE_VERSION: ${{ inputs.node-version }}
+          INPUT_WORKING_DIRECTORY: ${{ inputs.working-directory }}
+          INPUT_CONFIG_PATH: ${{ inputs.config-path }}
+          INPUT_BUILD_NUMBER_OFFSET: ${{ inputs.build-number-offset }}
+          INPUT_ARTIFACT_RETENTION_DAYS: ${{ inputs.artifact-retention-days }}
+
+  android:
+    name: Android
+    needs: resolve
+    if: needs.resolve.outputs.android == 'true'
+    runs-on: ${{ fromJSON(needs.resolve.outputs.android-runner) }}
+    # Empty for an unsigned build, which then runs without any environment.
+    environment: ${{ needs.resolve.outputs.environment }}
+    timeout-minutes: 90
+    outputs:
+      artifact: ${{ steps.artifact.outputs.name }}
+    env:
+      RNW_PLAN: ${{ needs.resolve.outputs.plan }}
+    defaults:
+      run:
+        working-directory: ${{ needs.resolve.outputs.working-directory }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install rn-workflows
+        uses: lmiklosko/rn-workflows/actions/cli@main
+
+      - name: Set up the workspace
+        id: setup
+        uses: lmiklosko/rn-workflows/actions/setup@main
+        with:
+          working-directory: ${{ needs.resolve.outputs.working-directory }}
+          node-version: ${{ fromJSON(needs.resolve.outputs.plan).node }}
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Export build environment
+        run: rn-workflows ci env
+        env:
+          RNW_VARS_JSON: ${{ toJSON(vars) }}
+          RNW_APP_ENV: ${{ secrets.APP_ENV }}
+
+      # Before prebuild, so app config plugins can read RNW_ANDROID_CERT_SHA256.
+      - name: Install signing credentials
+        if: needs.resolve.outputs.signing == 'true'
+        run: rn-workflows ci android-credentials
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+
+      - name: Hook - before prebuild
+        if: fromJSON(env.RNW_PLAN).hooks.prePrebuild
+        run: bash -eo pipefail -c "$HOOK"
+        env:
+          HOOK: ${{ fromJSON(env.RNW_PLAN).hooks.prePrebuild }}
+
+      # NODE_ENV is set for prebuild and Gradle only, never for the install.
+      - name: Prebuild
+        run: ${{ steps.setup.outputs.exec }} expo prebuild --platform android --clean --no-install
+        env:
+          NODE_ENV: production
+
+      - name: Hook - after prebuild
+        if: fromJSON(env.RNW_PLAN).hooks.postPrebuild
+        run: bash -eo pipefail -c "$HOOK"
+        env:
+          HOOK: ${{ fromJSON(env.RNW_PLAN).hooks.postPrebuild }}
+
+      - name: Set build number
+        run: rn-workflows ci patch-android
+
+      - name: Build
+        working-directory: ${{ needs.resolve.outputs.working-directory }}/android
+        run: |
+          chmod +x gradlew
+          ./gradlew $GRADLE_TASKS
+        env:
+          GRADLE_TASKS: ${{ needs.resolve.outputs.android-gradle-tasks }}
+          NODE_ENV: production
+
+      - name: Hook - after build
+        if: fromJSON(env.RNW_PLAN).hooks.postBuild
+        run: bash -eo pipefail -c "$HOOK"
+        env:
+          HOOK: ${{ fromJSON(env.RNW_PLAN).hooks.postBuild }}
+
+      - name: Name the artifact
+        id: artifact
+        run: echo "name=android-${PROFILE:-unsigned}" >> "$GITHUB_OUTPUT"
+        env:
+          PROFILE: ${{ needs.resolve.outputs.signing == 'true' && needs.resolve.outputs.profile || '' }}
+
+      - name: Upload build
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.artifact.outputs.name }}
+          path: |
+            ${{ needs.resolve.outputs.working-directory }}/android/app/build/outputs/apk/**/*.apk
+            ${{ needs.resolve.outputs.working-directory }}/android/app/build/outputs/bundle/**/*.aab
+            ${{ needs.resolve.outputs.extra-artifact-paths }}
+          if-no-files-found: error
+          retention-days: ${{ needs.resolve.outputs.artifact-retention-days }}
+
+      - name: Remove credentials
+        if: always()
+        run: rn-workflows ci cleanup || true

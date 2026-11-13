@@ -44,32 +44,35 @@ export function runResolve(repoRoot: string, env: NodeJS.ProcessEnv): ResolveRes
   return { plan, version };
 }
 
+/** Gradle tasks for the Android job: release outputs when signing, a debug APK otherwise. */
+export function androidGradleTasks(plan: BuildPlan): string[] {
+  if (!plan.signing) return ['assembleDebug'];
+  const tasks: string[] = [];
+  if (plan.android.outputs.includes('apk')) tasks.push('assembleRelease');
+  if (plan.android.outputs.includes('aab')) tasks.push('bundleRelease');
+  return tasks;
+}
+
 /** Step outputs consumed by the reusable workflow's later jobs. */
 export function toOutputs({ plan, version }: ResolveResult): Record<string, string> {
+  const wd = plan.workingDirectory.replace(/\/+$/, '') || '.';
   return {
     plan: JSON.stringify(plan),
     version: version ?? '',
     'build-number': String(plan.buildNumber),
+    profile: plan.profile ?? '',
     environment: plan.environment ?? '',
     signing: String(plan.signing),
-    'working-directory': plan.workingDirectory,
+    'working-directory': wd,
     android: String(plan.android.enabled),
     ios: String(plan.ios.enabled),
     // Always JSON, so the workflow can use fromJSON() for both a single label
     // and a list of self-hosted labels.
     'android-runner': JSON.stringify(plan.android.runner),
     'ios-runner': JSON.stringify(plan.ios.runner),
+    'android-gradle-tasks': androidGradleTasks(plan).join(' '),
+    // One glob per line, relative to the repo root, as upload-artifact expects.
+    'extra-artifact-paths': plan.artifacts.map((glob) => `${wd}/${glob}`).join('\n'),
+    'artifact-retention-days': String(plan.artifactRetentionDays),
   };
-}
-
-export function writeOutputs(outputs: Record<string, string>, file: string | undefined): void {
-  const lines = Object.entries(outputs).map(([key, value]) => {
-    if (value.includes('\n')) throw new Error(`Output '${key}' must be a single line.`);
-    return `${key}=${value}`;
-  });
-  if (file) {
-    fs.appendFileSync(file, lines.join('\n') + '\n');
-  } else {
-    console.log(lines.join('\n'));
-  }
 }

@@ -1,0 +1,27 @@
+name: Install the rn-workflows CLI
+description: Builds the CLI from this action's own checkout and puts `rn-workflows` on the PATH.
+
+# The CLI is built from the same ref as the action, so the workflow and the CLI
+# can never be out of step. Needs Node 20+ on the runner, which GitHub-hosted
+# runners have; on self-hosted runners, set up Node before this action.
+
+runs:
+  using: composite
+  steps:
+    - name: Build the rn-workflows CLI
+      shell: bash
+      run: |
+        set -euo pipefail
+        ROOT="$(cd "$GITHUB_ACTION_PATH/../.." && pwd -P)"
+
+        if [ ! -f "$ROOT/dist/cli.js" ]; then
+          # NODE_ENV is cleared so a job-level `production` cannot make npm skip
+          # the TypeScript compiler.
+          (cd "$ROOT" && NODE_ENV= npm ci --include=dev --ignore-scripts --no-audit --no-fund --loglevel=error && NODE_ENV= npm run --silent build)
+        fi
+
+        BIN="$RUNNER_TEMP/rnw-bin"
+        mkdir -p "$BIN"
+        printf '#!/usr/bin/env bash\nexec node "%s/dist/cli.js" "$@"\n' "$ROOT" > "$BIN/rn-workflows"
+        chmod +x "$BIN/rn-workflows"
+        echo "$BIN" >> "$GITHUB_PATH"
