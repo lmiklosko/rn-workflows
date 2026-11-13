@@ -48,4 +48,4 @@ It then compares the SHA-256 of the certificate in the keystore with the one tha
 
 **Decision.** Android signing is done with injected properties only. The one edit to the generated project is `versionCode`.
 
-**Caveat.** The passwords appear on the Gradle command line. In the real action they are passed through `ORG_GRADLE_PROJECT_*` environment variables instead, which Gradle reads as the same project properties without putting them in the process list.
+**Caveat.** The spike puts the passwords on the Gradle command line, where they are visible in the process list. The real action should supply the same properties another way, such as a temporary `gradle.properties` in a private `GRADLE_USER_HOME`. That variant is not yet tested.
