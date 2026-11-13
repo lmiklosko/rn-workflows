@@ -1,0 +1,227 @@
+{
+  "title": "rn-workflows configuration",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "$schema": {
+      "type": "string"
+    },
+    "workingDirectory": {
+      "description": "Directory of the Expo app, relative to the repo root. Defaults to \".\".",
+      "type": "string"
+    },
+    "variantEnv": {
+      "description": "Name of the env var that carries the profile's `variant`. Defaults to APP_VARIANT.",
+      "type": "string"
+    },
+    "buildNumberOffset": {
+      "description": "Added to the GitHub run number to form the build number.",
+      "type": "integer",
+      "minimum": -9007199254740991,
+      "maximum": 9007199254740991
+    },
+    "node": {
+      "description": "Node version. Defaults to .nvmrc, then the runner default.",
+      "type": "string"
+    },
+    "xcode": {
+      "description": "Xcode version to select. Defaults to the runner default.",
+      "type": "string"
+    },
+    "runners": {
+      "type": "object",
+      "properties": {
+        "android": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "minItems": 1,
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          ]
+        },
+        "ios": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "minItems": 1,
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "env": {
+      "type": "object",
+      "properties": {
+        "vars": {
+          "description": "Environment variables to expose to the build. `*` wildcards allowed.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "secrets": {
+          "description": "Secrets to expose to the build, by exact name.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "artifacts": {
+      "description": "Extra globs, relative to the working directory, uploaded with the build.",
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "hooks": {
+      "type": "object",
+      "properties": {
+        "prePrebuild": {
+          "description": "Shell command run before `expo prebuild`.",
+          "type": "string"
+        },
+        "postPrebuild": {
+          "description": "Shell command run after `expo prebuild`.",
+          "type": "string"
+        },
+        "postBuild": {
+          "description": "Shell command run after the native build.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "description": "Shell commands run inside the build job, from the working directory."
+    },
+    "profiles": {
+      "type": "object",
+      "propertyNames": {
+        "type": "string",
+        "minLength": 1
+      },
+      "additionalProperties": {
+        "type": "object",
+        "properties": {
+          "environment": {
+            "description": "GitHub Environment holding this profile's secrets. Defaults to the profile name.",
+            "type": "string"
+          },
+          "variant": {
+            "description": "Value exported in the variant env var (see `variantEnv`) for app.config to read.",
+            "type": "string"
+          },
+          "android": {
+            "type": "object",
+            "properties": {
+              "outputs": {
+                "minItems": 1,
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "enum": [
+                    "apk",
+                    "aab"
+                  ]
+                }
+              }
+            },
+            "additionalProperties": false
+          },
+          "deliver": {
+            "type": "object",
+            "properties": {
+              "firebase": {
+                "type": "object",
+                "properties": {
+                  "groups": {
+                    "description": "Tester group aliases to notify.",
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "androidAppId": {
+                    "description": "Firebase app ID. Read from google-services.json when omitted.",
+                    "type": "string"
+                  },
+                  "iosAppId": {
+                    "description": "Firebase app ID. Read from GoogleService-Info.plist when omitted.",
+                    "type": "string"
+                  }
+                },
+                "additionalProperties": false
+              },
+              "testflight": {
+                "type": "object",
+                "properties": {
+                  "groups": {
+                    "description": "Beta groups the build is added to.",
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "additionalProperties": false
+              },
+              "play": {
+                "type": "object",
+                "properties": {
+                  "track": {
+                    "default": "internal",
+                    "description": "Play track the bundle is uploaded to.",
+                    "type": "string"
+                  }
+                },
+                "additionalProperties": false
+              },
+              "submitForReview": {
+                "description": "Submit the uploaded store build for review. Off by default.",
+                "type": "boolean"
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "notify": {
+      "type": "object",
+      "properties": {
+        "slack": {
+          "type": "boolean"
+        },
+        "teams": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    },
+    "artifactRetentionDays": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 90
+    }
+  },
+  "additionalProperties": false
+}

@@ -1,0 +1,33 @@
+{
+  "name": "@lmiklosko/rn-workflows",
+  "version": "0.0.0",
+  "description": "Shared GitHub Actions build and release pipeline for Expo apps, with a CLI to manage signing credentials.",
+  "type": "module",
+  "bin": {
+    "rn-workflows": "dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "schema"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "schema": "tsx scripts/gen-schema.ts",
+    "dev": "tsx src/cli.ts"
+  },
+  "dependencies": {
+    "commander": "^14.0.0",
+    "zod": "^4.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0",
+    "vitest": "^3.0.0"
+  }
+}

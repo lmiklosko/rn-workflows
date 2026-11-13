@@ -1,0 +1,12 @@
+node_modules/
+dist/
+.DS_Store
+*.tsbuildinfo
+
+# Never commit signing material
+.credentials/
+*.p12
+*.p8
+*.mobileprovision
+*.keystore
+*.jks
