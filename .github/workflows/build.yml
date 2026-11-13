@@ -13,6 +13,9 @@ name: Build
 #         ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
 #         ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
 #         ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+#         IOS_P12_BASE64: ${{ secrets.IOS_P12_BASE64 }}
+#         IOS_P12_PASSWORD: ${{ secrets.IOS_P12_PASSWORD }}
+#         IOS_MOBILEPROVISION_BASE64: ${{ secrets.IOS_MOBILEPROVISION_BASE64 }}
 #
 # Secrets are read from the GitHub Environment named after the profile. They
 # must be passed by name as above: `secrets: inherit` is ignored when the
@@ -83,6 +86,14 @@ on:
         required: false
       ANDROID_KEY_PASSWORD:
         required: false
+      IOS_P12_BASE64:
+        description: Signing certificate with its private key, as a base64-encoded .p12.
+        required: false
+      IOS_P12_PASSWORD:
+        required: false
+      IOS_MOBILEPROVISION_BASE64:
+        description: Provisioning profile, base64-encoded. Its type decides the export method.
+        required: false
       APP_ENV:
         description: dotenv content exported to the app's prebuild and build.
         required: false
@@ -96,6 +107,9 @@ on:
       android-artifact:
         description: Name of the run artifact holding the Android build, empty when Android was not built.
         value: ${{ jobs.android.outputs.artifact }}
+      ios-artifact:
+        description: Name of the run artifact holding the iOS build, empty when iOS was not built.
+        value: ${{ jobs.ios.outputs.artifact }}
 
 permissions:
   contents: read
@@ -248,6 +262,184 @@ jobs:
             ${{ needs.resolve.outputs.extra-artifact-paths }}
           if-no-files-found: error
           retention-days: ${{ needs.resolve.outputs.artifact-retention-days }}
+
+      - name: Remove credentials
+        if: always()
+        run: rn-workflows ci cleanup || true
+
+  ios:
+    name: iOS
+    needs: resolve
+    if: needs.resolve.outputs.ios == 'true'
+    runs-on: ${{ fromJSON(needs.resolve.outputs.ios-runner) }}
+    environment: ${{ needs.resolve.outputs.environment }}
+    timeout-minutes: 120
+    outputs:
+      artifact: ${{ steps.artifact.outputs.name }}
+    env:
+      RNW_PLAN: ${{ needs.resolve.outputs.plan }}
+      # Without it CocoaPods aborts with "Unicode Normalization not appropriate
+      # for ASCII-8BIT".
+      LANG: en_US.UTF-8
+    defaults:
+      run:
+        working-directory: ${{ needs.resolve.outputs.working-directory }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install rn-workflows
+        uses: lmiklosko/rn-workflows/actions/cli@main
+
+      - name: Set up the workspace
+        id: setup
+        uses: lmiklosko/rn-workflows/actions/setup@main
+        with:
+          working-directory: ${{ needs.resolve.outputs.working-directory }}
+          node-version: ${{ fromJSON(needs.resolve.outputs.plan).node }}
+
+      - name: Select Xcode
+        env:
+          XCODE: ${{ fromJSON(needs.resolve.outputs.plan).ios.xcode }}
+        run: |
+          if [ -n "$XCODE" ]; then
+            APP="/Applications/Xcode_$XCODE.app"
+            if [ ! -d "$APP" ]; then
+              echo "::error::Xcode $XCODE is not installed on this runner. Available: $(ls /Applications | grep -i '^Xcode' | tr '\n' ' ')"
+              exit 1
+            fi
+            sudo xcode-select -s "$APP/Contents/Developer"
+          fi
+          xcodebuild -version
+
+      - name: Export build environment
+        run: rn-workflows ci env
+        env:
+          RNW_VARS_JSON: ${{ toJSON(vars) }}
+          RNW_APP_ENV: ${{ secrets.APP_ENV }}
+
+      # Before prebuild, so app config plugins can read RNW_IOS_TEAM_ID and
+      # RNW_IOS_PROFILE_PATH.
+      - name: Install signing credentials
+        if: needs.resolve.outputs.signing == 'true'
+        run: rn-workflows ci ios-credentials
+        env:
+          IOS_P12_BASE64: ${{ secrets.IOS_P12_BASE64 }}
+          IOS_P12_PASSWORD: ${{ secrets.IOS_P12_PASSWORD }}
+          IOS_MOBILEPROVISION_BASE64: ${{ secrets.IOS_MOBILEPROVISION_BASE64 }}
+
+      - name: Hook - before prebuild
+        if: fromJSON(env.RNW_PLAN).hooks.prePrebuild
+        run: bash -eo pipefail -c "$HOOK"
+        env:
+          HOOK: ${{ fromJSON(env.RNW_PLAN).hooks.prePrebuild }}
+
+      - name: Prebuild
+        run: ${{ steps.setup.outputs.exec }} expo prebuild --platform ios --clean --no-install
+        env:
+          NODE_ENV: production
+
+      - name: Install pods
+        working-directory: ${{ needs.resolve.outputs.working-directory }}/ios
+        run: pod install
+        env:
+          NODE_ENV: production
+
+      - name: Hook - after prebuild
+        if: fromJSON(env.RNW_PLAN).hooks.postPrebuild
+        run: bash -eo pipefail -c "$HOOK"
+        env:
+          HOOK: ${{ fromJSON(env.RNW_PLAN).hooks.postPrebuild }}
+
+      # Also checks the app's entitlements against the profile, which xcodebuild
+      # would only report at the end of the archive.
+      - name: Set build number and signing
+        run: rn-workflows ci patch-ios
+
+      # Proves the app compiles and bundles. Release, so the JavaScript bundle
+      # is built too; arm64 only, to compile once instead of twice.
+      - name: Build for the simulator (unsigned)
+        if: needs.resolve.outputs.signing != 'true'
+        working-directory: ${{ needs.resolve.outputs.working-directory }}/ios
+        env:
+          NODE_ENV: production
+        run: |
+          set -o pipefail
+          pretty() { if command -v xcbeautify >/dev/null 2>&1; then xcbeautify --renderer github-actions; else cat; fi; }
+          if [ -n "$RNW_IOS_WORKSPACE" ]; then CONTAINER=(-workspace "$RNW_IOS_WORKSPACE"); else CONTAINER=(-project "$RNW_IOS_PROJECT"); fi
+
+          xcodebuild "${CONTAINER[@]}" \
+            -scheme "$RNW_IOS_SCHEME" \
+            -configuration Release \
+            -sdk iphonesimulator \
+            -destination 'generic/platform=iOS Simulator' \
+            -derivedDataPath "$RUNNER_TEMP/rnw-derived-data" \
+            ARCHS=arm64 ONLY_ACTIVE_ARCH=NO CODE_SIGNING_ALLOWED=NO \
+            build 2>&1 | tee "$RUNNER_TEMP/xcodebuild.log" | pretty
+
+          APP=$(find "$RUNNER_TEMP/rnw-derived-data/Build/Products" -maxdepth 2 -name '*.app' | head -n 1)
+          [ -n "$APP" ] || { echo "::error::The build finished but produced no .app."; exit 1; }
+          mkdir -p build/rnw
+          ditto -c -k --keepParent "$APP" "build/rnw/$(basename "$APP" .app)-simulator.zip"
+
+      - name: Archive and export (signed)
+        if: needs.resolve.outputs.signing == 'true'
+        working-directory: ${{ needs.resolve.outputs.working-directory }}/ios
+        env:
+          NODE_ENV: production
+        run: |
+          set -o pipefail
+          pretty() { if command -v xcbeautify >/dev/null 2>&1; then xcbeautify --renderer github-actions; else cat; fi; }
+          if [ -n "$RNW_IOS_WORKSPACE" ]; then CONTAINER=(-workspace "$RNW_IOS_WORKSPACE"); else CONTAINER=(-project "$RNW_IOS_PROJECT"); fi
+
+          xcodebuild "${CONTAINER[@]}" \
+            -scheme "$RNW_IOS_SCHEME" \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -archivePath "$RUNNER_TEMP/rnw-app.xcarchive" \
+            archive 2>&1 | tee "$RUNNER_TEMP/xcodebuild.log" | pretty
+
+          rn-workflows ci ios-export-options --out "$RUNNER_TEMP/rnw-export-options.plist"
+
+          xcodebuild -exportArchive \
+            -archivePath "$RUNNER_TEMP/rnw-app.xcarchive" \
+            -exportOptionsPlist "$RUNNER_TEMP/rnw-export-options.plist" \
+            -exportPath build/rnw 2>&1 | tee -a "$RUNNER_TEMP/xcodebuild.log" | pretty
+
+          ls build/rnw/*.ipa >/dev/null 2>&1 || { echo "::error::Export finished but produced no .ipa."; exit 1; }
+
+      - name: Hook - after build
+        if: fromJSON(env.RNW_PLAN).hooks.postBuild
+        run: bash -eo pipefail -c "$HOOK"
+        env:
+          HOOK: ${{ fromJSON(env.RNW_PLAN).hooks.postBuild }}
+
+      - name: Name the artifact
+        id: artifact
+        run: echo "name=ios-${PROFILE:-unsigned}" >> "$GITHUB_OUTPUT"
+        env:
+          PROFILE: ${{ needs.resolve.outputs.signing == 'true' && needs.resolve.outputs.profile || '' }}
+
+      - name: Upload build
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.artifact.outputs.name }}
+          path: |
+            ${{ needs.resolve.outputs.working-directory }}/ios/build/rnw/*.ipa
+            ${{ needs.resolve.outputs.working-directory }}/ios/build/rnw/*.zip
+            ${{ needs.resolve.outputs.extra-artifact-paths }}
+          if-no-files-found: error
+          retention-days: ${{ needs.resolve.outputs.artifact-retention-days }}
+
+      # The formatted log above is abridged; the full one explains odd failures.
+      - name: Upload xcodebuild log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.artifact.outputs.name || 'ios' }}-xcodebuild-log
+          path: ${{ runner.temp }}/xcodebuild.log
+          if-no-files-found: ignore
+          retention-days: 7
 
       - name: Remove credentials
         if: always()

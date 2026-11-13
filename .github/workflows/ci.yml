@@ -33,13 +33,130 @@ jobs:
           git diff --exit-code schema/
 
   # Input-only use: no config file, no profile, no secrets.
-  android-unsigned:
-    name: e2e Android unsigned
+  unsigned:
+    name: e2e unsigned
     needs: test
     uses: ./.github/workflows/build.yml
     with:
-      platform: android
+      platform: all
       working-directory: example
+
+  # A signed iOS build needs a certificate and profile issued by Apple, which
+  # this repo does not have. This covers everything up to the archive with a
+  # self-signed certificate: keychain import, profile install, project
+  # patching, export options and cleanup, on a real macOS runner.
+  ios-signing:
+    name: iOS signing steps (fake credentials)
+    needs: test
+    runs-on: macos-latest
+    env:
+      LANG: en_US.UTF-8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./actions/cli
+      - id: setup
+        uses: ./actions/setup
+        with:
+          working-directory: example
+
+      - name: Resolve a signed plan
+        id: plan
+        run: rn-workflows ci resolve
+        env:
+          INPUT_PROFILE: e2e
+          INPUT_PLATFORM: ios
+          INPUT_CONFIG_PATH: example/rn-workflows.json
+          INPUT_BUILD_NUMBER_OFFSET: '5000'
+
+      - name: Make fake credentials
+        run: |
+          scripts/make-fake-ios-credentials.sh "$RUNNER_TEMP/fake" dev.rnworkflows.fromprofile
+          {
+            echo "IOS_P12_BASE64=$(base64 -i "$RUNNER_TEMP/fake/certificate.p12" | tr -d '\n')"
+            echo "IOS_MOBILEPROVISION_BASE64=$(base64 -i "$RUNNER_TEMP/fake/profile.mobileprovision" | tr -d '\n')"
+            echo "IOS_P12_PASSWORD=fake-password"
+            echo "RNW_PLAN=$PLAN"
+          } >> "$GITHUB_ENV"
+          security list-keychains -d user > "$RUNNER_TEMP/keychains-before.txt"
+        env:
+          PLAN: ${{ steps.plan.outputs.plan }}
+
+      - name: Wrong password is reported clearly
+        run: |
+          if IOS_P12_PASSWORD=wrong rn-workflows ci ios-credentials 2> "$RUNNER_TEMP/err.txt"; then
+            echo "::error::A wrong .p12 password was accepted."; exit 1
+          fi
+          cat "$RUNNER_TEMP/err.txt"
+          grep -q 'IOS_P12_PASSWORD is wrong' "$RUNNER_TEMP/err.txt"
+          rn-workflows ci cleanup
+
+      - name: Install credentials
+        run: rn-workflows ci ios-credentials
+
+      - name: Prebuild
+        working-directory: example
+        run: ${{ steps.setup.outputs.exec }} expo prebuild --platform ios --clean --no-install
+
+      - name: Patch the project
+        run: rn-workflows ci patch-ios --dir example
+
+      - name: Check what was installed and patched
+        run: |
+          set -euo pipefail
+          fail() { echo "::error::$1"; exit 1; }
+          UUID=11111111-2222-3333-4444-555555555555
+          KEYCHAIN="$RUNNER_TEMP/rnw/ios/signing.keychain-db"
+
+          [ "$RNW_IOS_TEAM_ID" = "FAKETEAM01" ] || fail "RNW_IOS_TEAM_ID is '$RNW_IOS_TEAM_ID'"
+          [ "$RNW_IOS_EXPORT_METHOD" = "release-testing" ] || fail "RNW_IOS_EXPORT_METHOD is '$RNW_IOS_EXPORT_METHOD'"
+          [ "$RNW_IOS_BUNDLE_ID" = "dev.rnworkflows.fromprofile" ] || fail "RNW_IOS_BUNDLE_ID is '$RNW_IOS_BUNDLE_ID'"
+          [ "$RNW_IOS_SCHEME" = "rnworkflowsexample" ] || fail "RNW_IOS_SCHEME is '$RNW_IOS_SCHEME'"
+
+          security find-identity -p codesigning "$KEYCHAIN" | tee "$RUNNER_TEMP/identity.txt"
+          grep -q 'Apple Distribution: rn-workflows Fake (FAKETEAM01)' "$RUNNER_TEMP/identity.txt" || fail "identity not in the keychain"
+          security list-keychains -d user | grep -q "$KEYCHAIN" || fail "keychain not in the search list"
+          [ ! -f "$RUNNER_TEMP/rnw/ios/certificate.p12" ] || fail "decoded .p12 was left on disk"
+
+          [ -f "$HOME/Library/MobileDevice/Provisioning Profiles/$UUID.mobileprovision" ] || fail "profile missing from the legacy directory"
+          [ -f "$HOME/Library/Developer/Xcode/UserData/Provisioning Profiles/$UUID.mobileprovision" ] || fail "profile missing from the Xcode 16 directory"
+
+          # Xcode's own view of the Release configuration, after patching.
+          cd example/ios
+          xcodebuild -project "$RNW_IOS_PROJECT" -target rnworkflowsexample -configuration Release -showBuildSettings 2>/dev/null > "$RUNNER_TEMP/settings.txt" || true
+          setting() { sed -n "s/^ *$1 = //p" "$RUNNER_TEMP/settings.txt" | head -n 1; }
+          for pair in \
+            "CODE_SIGN_STYLE=Manual" \
+            "DEVELOPMENT_TEAM=FAKETEAM01" \
+            "PROVISIONING_PROFILE_SPECIFIER=rn-workflows Fake Ad Hoc" \
+            "CODE_SIGN_IDENTITY=Apple Distribution: rn-workflows Fake (FAKETEAM01)" \
+            "PRODUCT_BUNDLE_IDENTIFIER=dev.rnworkflows.fromprofile" \
+            "CURRENT_PROJECT_VERSION=$((GITHUB_RUN_NUMBER + 5000))"; do
+            key="${pair%%=*}"; want="${pair#*=}"; got="$(setting "$key")"
+            echo "$key = $got"
+            [ "$got" = "$want" ] || fail "$key is '$got', expected '$want'"
+          done
+
+          BUNDLE_VERSION=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' rnworkflowsexample/Info.plist)
+          [ "$BUNDLE_VERSION" = "$((GITHUB_RUN_NUMBER + 5000))" ] || fail "CFBundleVersion is '$BUNDLE_VERSION'"
+
+      - name: Export options match the profile
+        run: |
+          rn-workflows ci ios-export-options --out "$RUNNER_TEMP/export.plist"
+          plutil -lint "$RUNNER_TEMP/export.plist"
+          cat "$RUNNER_TEMP/export.plist"
+          [ "$(/usr/libexec/PlistBuddy -c 'Print :method' "$RUNNER_TEMP/export.plist")" = "release-testing" ]
+          [ "$(/usr/libexec/PlistBuddy -c 'Print :provisioningProfiles:dev.rnworkflows.fromprofile' "$RUNNER_TEMP/export.plist")" = "rn-workflows Fake Ad Hoc" ]
+
+      - name: Cleanup restores the machine
+        run: |
+          set -euo pipefail
+          rn-workflows ci cleanup
+          UUID=11111111-2222-3333-4444-555555555555
+          [ ! -e "$RUNNER_TEMP/rnw" ] || { echo "::error::scratch directory left behind"; exit 1; }
+          [ ! -f "$HOME/Library/MobileDevice/Provisioning Profiles/$UUID.mobileprovision" ] || { echo "::error::profile left behind"; exit 1; }
+          [ ! -f "$HOME/Library/Developer/Xcode/UserData/Provisioning Profiles/$UUID.mobileprovision" ] || { echo "::error::profile left behind"; exit 1; }
+          security list-keychains -d user > "$RUNNER_TEMP/keychains-after.txt"
+          diff "$RUNNER_TEMP/keychains-before.txt" "$RUNNER_TEMP/keychains-after.txt" || { echo "::error::keychain search list was not restored"; exit 1; }
 
   # Signed with a throwaway keystore held in this repo's `e2e` Environment.
   android-signed:

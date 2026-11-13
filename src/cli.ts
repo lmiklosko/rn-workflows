@@ -2,7 +2,9 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { Command } from 'commander';
-import { exportEnv, mask, readPlan, scratchDir, setOutputs } from './ci/actions.js';
+import { buildExportOptions, exportMethodFor, missingEntitlements, parseMobileProvision } from './apple/profile.js';
+import { findIosProject, patchInfoPlist, patchXcodeProject, readEntitlements } from './apple/xcodeproj.js';
+import { exportEnv, mask, readPlan, scratchDir, setOutputs, warn } from './ci/actions.js';
 import {
   findAppBuildScript,
   gradlePropertiesFile,
@@ -11,6 +13,7 @@ import {
   removeAndroidCredentials,
 } from './ci/android.js';
 import { collectEnv } from './ci/env.js';
+import { installIosCredentials, readIosState, removeIosCredentials, xcodeVersion } from './ci/ios.js';
 import { runResolve, toOutputs } from './ci/resolve.js';
 import { UserError } from './errors.js';
 
@@ -86,11 +89,106 @@ ci.command('patch-android')
     console.log(`Set versionCode ${buildNumber} in ${path.relative(process.cwd(), file)}`);
   });
 
+ci.command('ios-credentials')
+  .description('Install the signing certificate in a temporary keychain and the provisioning profile for Xcode.')
+  .action(() => {
+    const { profile, state, warnings } = installIosCredentials(
+      {
+        p12Base64: process.env.IOS_P12_BASE64,
+        p12Password: process.env.IOS_P12_PASSWORD,
+        profileBase64: process.env.IOS_MOBILEPROVISION_BASE64,
+      },
+      path.join(scratchDir(), 'ios'),
+    );
+    warnings.forEach(warn);
+    // For app config plugins that need the signing identity during prebuild,
+    // e.g. to generate apple-app-site-association.
+    exportEnv({
+      RNW_IOS_TEAM_ID: profile.teamId,
+      RNW_IOS_BUNDLE_ID: profile.bundleId ?? '',
+      RNW_IOS_PROFILE_PATH: state.profilePath,
+      RNW_IOS_PROFILE_NAME: profile.name,
+      RNW_IOS_EXPORT_METHOD: profile.exportMethod,
+    });
+    console.log(
+      `Profile '${profile.name}' (${profile.uuid}) for ${profile.appId}, team ${profile.teamId}, ` +
+        `export method ${profile.exportMethod}, expires ${profile.expires.toISOString().slice(0, 10)}.`,
+    );
+    console.log(`Signing identity: ${state.identity}`);
+  });
+
+ci.command('patch-ios')
+  .description('Write the build number and, when signing, the signing settings into the generated Xcode project.')
+  .option('--dir <dir>', 'Expo app directory', process.cwd())
+  .action((opts: { dir: string }) => {
+    const plan = readPlan();
+    const project = findIosProject(path.resolve(opts.dir));
+
+    let profile = null;
+    let signing = null;
+    if (plan.signing) {
+      const state = readIosState(path.join(scratchDir(), 'ios'));
+      if (!state?.identity) {
+        throw new UserError('Signing credentials are not installed. Run `rn-workflows ci ios-credentials` before `patch-ios`.');
+      }
+      profile = parseMobileProvision(fs.readFileSync(state.profilePath));
+      signing = {
+        teamId: profile.teamId,
+        profileName: profile.name,
+        profileUuid: profile.uuid,
+        identity: state.identity,
+        bundleId: profile.bundleId,
+      };
+    }
+
+    const result = patchXcodeProject(project.pbxproj, plan.buildNumber, signing);
+    if (result.infoPlist) patchInfoPlist(path.join(project.iosDir, result.infoPlist), plan.buildNumber);
+    console.log(`Set build number ${plan.buildNumber} on target '${result.targetName}'.`);
+
+    if (profile) {
+      console.log(`Release configuration signs as ${result.bundleId} with profile '${profile.name}'.`);
+
+      // Checked now because xcodebuild only reports it at the end of the archive.
+      const declared = result.entitlements ? readEntitlements(path.join(project.iosDir, result.entitlements)) : {};
+      const missing = missingEntitlements(declared, profile);
+      if (missing.length) {
+        throw new UserError(
+          `The app declares entitlements that provisioning profile '${profile.name}' does not grant: ${missing.join(', ')}.\n` +
+            `Enable the matching capabilities on the ${result.bundleId} App ID at developer.apple.com, regenerate the profile ` +
+            '(changing an App ID invalidates existing profiles), and update IOS_MOBILEPROVISION_BASE64.',
+        );
+      }
+    }
+
+    exportEnv({
+      RNW_IOS_WORKSPACE: project.workspace ?? '',
+      RNW_IOS_PROJECT: project.project,
+      RNW_IOS_SCHEME: project.scheme,
+      RNW_IOS_BUNDLE_ID: result.bundleId,
+    });
+  });
+
+ci.command('ios-export-options')
+  .description('Write the ExportOptions.plist matching the installed provisioning profile.')
+  .requiredOption('--out <file>', 'where to write the plist')
+  .action((opts: { out: string }) => {
+    const state = readIosState(path.join(scratchDir(), 'ios'));
+    if (!state) throw new UserError('Signing credentials are not installed. Run `rn-workflows ci ios-credentials` first.');
+    const profile = parseMobileProvision(fs.readFileSync(state.profilePath));
+    const bundleId = profile.bundleId ?? process.env.RNW_IOS_BUNDLE_ID;
+    if (!bundleId) throw new UserError('The bundle identifier is unknown. Run `rn-workflows ci patch-ios` first.');
+
+    const method = exportMethodFor(profile.exportMethod, xcodeVersion());
+    fs.writeFileSync(opts.out, buildExportOptions({ method, teamId: profile.teamId, bundleId, profileName: profile.name }));
+    console.log(`Export method ${method} for ${bundleId}.`);
+  });
+
 ci.command('cleanup')
   .description('Remove decoded credentials. Safe to run when nothing was installed.')
   .action(() => {
     removeAndroidCredentials(gradlePropertiesFile());
     if (process.env.RUNNER_TEMP) {
+      removeIosCredentials(path.join(scratchDir(), 'ios'));
       fs.rmSync(scratchDir(), { recursive: true, force: true });
     }
     console.log('Credentials removed.');
