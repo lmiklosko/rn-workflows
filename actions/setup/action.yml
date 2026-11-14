@@ -8,6 +8,9 @@ inputs:
   node-version:
     description: Node version. When empty, .nvmrc or .node-version is used if present.
     default: ''
+  cache:
+    description: false skips the package manager download cache.
+    default: 'true'
 
 outputs:
   package-manager:
@@ -112,8 +115,17 @@ runs:
       with:
         node-version: ${{ inputs.node-version }}
         node-version-file: ${{ inputs.node-version == '' && steps.detect.outputs.node-version-file || '' }}
-        cache: ${{ steps.detect.outputs.cache }}
+        cache: ${{ inputs.cache == 'true' && steps.detect.outputs.cache || '' }}
         cache-dependency-path: ${{ steps.detect.outputs.lockfile }}
+
+    # setup-node has no Bun support, so its download cache is restored here.
+    - name: Cache Bun downloads
+      if: steps.detect.outputs.package-manager == 'bun' && inputs.cache == 'true'
+      uses: actions/cache@v4
+      with:
+        path: ~/.bun/install/cache
+        key: rnw-bun-${{ runner.os }}-${{ hashFiles(steps.detect.outputs.lockfile) }}
+        restore-keys: rnw-bun-${{ runner.os }}-
 
     # NODE_ENV is cleared for the install: with `production`, package managers
     # skip devDependencies, which the Expo CLI and Metro config usually are.

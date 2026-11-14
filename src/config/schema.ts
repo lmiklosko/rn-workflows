@@ -113,6 +113,12 @@ export const configSchema = z.strictObject({
     })
     .optional(),
   artifactRetentionDays: z.number().int().min(1).max(90).optional(),
+  cache: z
+    .boolean()
+    .optional()
+    .describe(
+      'Keep dependency and compiler caches between runs (package manager, Gradle, ccache, CocoaPods). Defaults to true; false builds everything from scratch.',
+    ),
 });
 
 export type Config = z.infer<typeof configSchema>;

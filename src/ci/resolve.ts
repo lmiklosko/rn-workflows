@@ -34,6 +34,7 @@ export function runResolve(repoRoot: string, env: NodeJS.ProcessEnv): ResolveRes
     workingDirectory: env.INPUT_WORKING_DIRECTORY,
     buildNumberOffset: env.INPUT_BUILD_NUMBER_OFFSET,
     artifactRetentionDays: env.INPUT_ARTIFACT_RETENTION_DAYS,
+    cache: env.INPUT_CACHE,
   };
 
   const runNumber = Number(env.GITHUB_RUN_NUMBER ?? '1');
@@ -74,6 +75,7 @@ export function toOutputs({ plan, version }: ResolveResult): Record<string, stri
     // One glob per line, relative to the repo root, as upload-artifact expects.
     'extra-artifact-paths': plan.artifacts.map((glob) => `${wd}/${glob}`).join('\n'),
     'artifact-retention-days': String(plan.artifactRetentionDays),
+    cache: String(plan.cache),
     'android-deliver': String(Boolean(plan.deliver.firebase || plan.deliver.play)),
     'ios-deliver': String(Boolean(plan.deliver.firebase || plan.deliver.testflight)),
     'testflight-groups': String((plan.deliver.testflight?.groups ?? []).length > 0),

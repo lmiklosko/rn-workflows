@@ -25,6 +25,7 @@ export interface WorkflowInputs {
   workingDirectory?: string;
   buildNumberOffset?: string;
   artifactRetentionDays?: string;
+  cache?: string;
 }
 
 export interface BuildPlan {
@@ -46,6 +47,8 @@ export interface BuildPlan {
   hooks: { prePrebuild: string | null; postPrebuild: string | null; postBuild: string | null };
   notify: { slack: boolean; teams: boolean };
   artifactRetentionDays: number;
+  /** Restore and save build caches between runs. */
+  cache: boolean;
 }
 
 const given = (value: string | undefined): string | undefined => {
@@ -241,5 +244,6 @@ export function resolvePlan({ config, hasConfigFile, inputs, runNumber }: Resolv
       parseInteger('artifact-retention-days', inputs.artifactRetentionDays) ??
       config.artifactRetentionDays ??
       14,
+    cache: parseBoolean('cache', inputs.cache) ?? config.cache ?? true,
   };
 }

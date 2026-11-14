@@ -43,6 +43,7 @@ describe('resolvePlan', () => {
       deliver: { firebase: { groups: ['qa'] } },
       artifacts: ['well-known/**'],
       variant: null,
+      cache: true,
     });
   });
 
@@ -61,6 +62,13 @@ describe('resolvePlan', () => {
     expect(plan.workingDirectory).toBe('apps/mobile');
     expect(plan.buildNumber).toBe(7);
     expect(plan.artifactRetentionDays).toBe(3);
+  });
+
+  it('caches by default, and lets the config file or an input turn it off', () => {
+    expect(resolve({}).cache).toBe(true);
+    expect(resolve({}, 7, { ...config, cache: false }).cache).toBe(false);
+    expect(resolve({ cache: 'false' }).cache).toBe(false);
+    expect(resolve({ cache: 'true' }, 7, { ...config, cache: false }).cache).toBe(true);
   });
 
   it('maps a profile to its own environment name and variant', () => {
@@ -128,6 +136,7 @@ describe('resolvePlan', () => {
     [{ submitForReview: 'yes' }, /submit-for-review/],
     [{ iosRunner: '[1,2]' }, /ios-runner/],
     [{ buildNumberOffset: '-500' }, /positive integer/],
+    [{ cache: 'off' }, /cache/],
   ] as [WorkflowInputs, RegExp][])('rejects invalid input %j', (inputs, message) => {
     expect(() => resolve(inputs)).toThrow(ConfigError);
     expect(() => resolve(inputs)).toThrow(message);
@@ -179,6 +188,7 @@ describe('config file', () => {
       ios: 'false',
       'android-runner': '"ubuntu-latest"',
       'working-directory': 'mobile',
+      cache: 'true',
     });
     expect(JSON.parse(outputs.plan!).profile).toBe('Dev');
   });

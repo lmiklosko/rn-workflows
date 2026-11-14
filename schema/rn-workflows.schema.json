@@ -223,6 +223,10 @@
       "type": "integer",
       "minimum": 1,
       "maximum": 90
+    },
+    "cache": {
+      "description": "Keep dependency and compiler caches between runs (package manager, Gradle, ccache, CocoaPods). Defaults to true; false builds everything from scratch.",
+      "type": "boolean"
     }
   },
   "additionalProperties": false
