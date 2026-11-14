@@ -435,28 +435,15 @@ jobs:
           fi
           xcodebuild -version
 
-      - name: Set up ccache
-        if: needs.resolve.outputs.cache == 'true'
-        working-directory: .
-        run: |
-          command -v ccache >/dev/null || HOMEBREW_NO_AUTO_UPDATE=1 brew install --quiet ccache
-          {
-            echo "CCACHE_DIR=$HOME/.rnw-ccache"
-            echo "CCACHE_MAXSIZE=3G"
-            echo "CCACHE_BASEDIR=$GITHUB_WORKSPACE"
-            echo "CCACHE_COMPILERCHECK=content"
-            echo "USE_CCACHE=1"
-          } >> "$GITHUB_ENV"
-
-      - name: Restore caches
+      # No ccache on iOS: React Native and Expo ship their iOS core
+      # precompiled, and Swift is not cacheable, so it recorded no hits.
+      - name: Restore CocoaPods cache
         if: needs.resolve.outputs.cache == 'true'
         uses: actions/cache/restore@v4
         with:
-          path: |
-            ~/.rnw-ccache
-            ~/Library/Caches/CocoaPods
-          key: rnw-ios-${{ github.run_id }}
-          restore-keys: rnw-ios-
+          path: ~/Library/Caches/CocoaPods
+          key: rnw-pods-${{ github.run_id }}
+          restore-keys: rnw-pods-
 
       - name: Export build environment
         run: rn-workflows ci env
@@ -485,23 +472,11 @@ jobs:
         env:
           NODE_ENV: production
 
-      # React Native wires ccache into the Xcode project during pod install
-      # when Podfile.properties.json asks for it.
       - name: Install pods
         working-directory: ${{ needs.resolve.outputs.working-directory }}/ios
-        run: |
-          if [ "$CACHE" = true ]; then
-            node -e '
-              const fs = require("fs"); const f = "Podfile.properties.json";
-              const p = fs.existsSync(f) ? JSON.parse(fs.readFileSync(f, "utf8")) : {};
-              p["apple.ccacheEnabled"] = "true";
-              fs.writeFileSync(f, JSON.stringify(p, null, 2) + "\n");'
-            ccache --zero-stats > /dev/null
-          fi
-          pod install
+        run: pod install
         env:
           NODE_ENV: production
-          CACHE: ${{ needs.resolve.outputs.cache }}
 
       - name: Hook - after prebuild
         if: fromJSON(env.RNW_PLAN).hooks.postPrebuild
@@ -566,18 +541,12 @@ jobs:
 
           ls build/rnw/*.ipa >/dev/null 2>&1 || { echo "::error::Export finished but produced no .ipa."; exit 1; }
 
-      - name: Save caches
+      - name: Save CocoaPods cache
         if: needs.resolve.outputs.cache == 'true'
         uses: actions/cache/save@v4
         with:
-          path: |
-            ~/.rnw-ccache
-            ~/Library/Caches/CocoaPods
-          key: rnw-ios-${{ github.run_id }}
-
-      - name: ccache statistics
-        if: needs.resolve.outputs.cache == 'true'
-        run: ccache --show-stats
+          path: ~/Library/Caches/CocoaPods
+          key: rnw-pods-${{ github.run_id }}
 
       - name: Hook - after build
         if: fromJSON(env.RNW_PLAN).hooks.postBuild

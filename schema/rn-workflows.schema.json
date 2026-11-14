@@ -225,7 +225,7 @@
       "maximum": 90
     },
     "cache": {
-      "description": "Keep dependency and compiler caches between runs (package manager, Gradle, ccache, CocoaPods). Defaults to true; false builds everything from scratch.",
+      "description": "Keep dependency and compiler caches between runs (package manager, Gradle, Android ccache, CocoaPods). Defaults to true; false builds everything from scratch.",
       "type": "boolean"
     }
   },

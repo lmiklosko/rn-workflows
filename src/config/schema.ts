@@ -117,7 +117,7 @@ export const configSchema = z.strictObject({
     .boolean()
     .optional()
     .describe(
-      'Keep dependency and compiler caches between runs (package manager, Gradle, ccache, CocoaPods). Defaults to true; false builds everything from scratch.',
+      'Keep dependency and compiler caches between runs (package manager, Gradle, Android ccache, CocoaPods). Defaults to true; false builds everything from scratch.',
     ),
 });
 

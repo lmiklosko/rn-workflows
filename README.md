@@ -109,7 +109,7 @@ Secrets are passed by name because `secrets: inherit` is ignored when the callin
 
 ### Caching
 
-Builds keep caches between runs: package manager downloads, Gradle dependencies and its build cache, native compiler output through ccache (Android and iOS), and CocoaPods downloads. The first build of a branch fills them; later ones reuse them, and a new branch starts from the most recent cache available to it.
+Builds keep caches between runs: package manager downloads, Gradle dependencies and its build cache, native compiler output on Android through ccache, and CocoaPods downloads. The first build of a branch fills them; later ones reuse them, and a new branch starts from the most recent cache available to it.
 
 To build from scratch every time, set `"cache": false` in `rn-workflows.json`, or pass `cache: 'false'` to the workflow for a single run. Caches count against the repository's GitHub Actions cache quota (10 GB by default); old entries are evicted automatically.
 
