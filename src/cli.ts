@@ -15,13 +15,78 @@ import {
 import { collectEnv } from './ci/env.js';
 import { installIosCredentials, readIosState, removeIosCredentials, xcodeVersion } from './ci/ios.js';
 import { runResolve, toOutputs } from './ci/resolve.js';
+import { runAndroidCredentials, type AndroidOptions } from './commands/android.js';
+import { runInit, type InitOptions } from './commands/init.js';
+import { runIosImport, type IosOptions } from './commands/ios.js';
+import { runStatus, type StatusOptions } from './commands/status.js';
 import { UserError } from './errors.js';
+import { connect } from './github/context.js';
 
 const program = new Command();
 
 program
   .name('rn-workflows')
   .description('Build and release pipeline for Expo apps on GitHub Actions.');
+
+program
+  .command('init')
+  .description('Set up a repository: config file, caller workflow, GitHub Environments and signing credentials.')
+  .option('--repo <owner/name>', 'GitHub repository (default: the origin remote)')
+  .option('--app-dir <dir>', 'directory of the Expo app (default: detected)')
+  .option('--profiles <names>', 'comma-separated build profiles')
+  .option('--skip-credentials', 'do not ask for signing credentials')
+  .option('-y, --yes', 'do not prompt; use flags and defaults')
+  .action(async (opts: InitOptions) => {
+    await runInit(opts, connect(process.cwd(), opts.repo), process.cwd());
+  });
+
+const credentials = program
+  .command('credentials')
+  .description('Create or update the signing credentials of a build profile.');
+
+credentials
+  .command('android')
+  .description('Generate an upload keystore, or import an existing one, and store it as Environment secrets.')
+  .requiredOption('--profile <name>', 'build profile')
+  .option('--generate', 'create a new keystore and keep a local copy under .credentials/')
+  .option('--keystore <file>', 'existing keystore to import')
+  .option('--properties <file>', 'signing properties file naming storeFile, storePassword, keyAlias, keyPassword')
+  .option('--alias <alias>', 'key alias in the keystore')
+  .option('--keystore-password <password>', 'prefer ANDROID_KEYSTORE_PASSWORD or the prompt: flags land in shell history')
+  .option('--key-password <password>', 'when different from the keystore password; or ANDROID_KEY_PASSWORD')
+  .option('--force', 'with --generate, replace a keystore that is already set')
+  .option('--repo <owner/name>', 'GitHub repository (default: the origin remote)')
+  .option('--config <file>', 'config file (default: rn-workflows.json)')
+  .action(async (opts: AndroidOptions) => {
+    await runAndroidCredentials(opts, connect(process.cwd(), opts.repo), process.cwd());
+  });
+
+credentials
+  .command('ios')
+  .description('Import a .p12 and/or a .mobileprovision you were given, and store them as Environment secrets.')
+  .requiredOption('--profile <name>', 'build profile')
+  .option('--p12 <file>', 'signing certificate with its private key')
+  .option('--mobileprovision <file>', 'provisioning profile')
+  .option('--p12-password <password>', 'prefer IOS_P12_PASSWORD or the prompt: flags land in shell history')
+  .option('--repo <owner/name>', 'GitHub repository (default: the origin remote)')
+  .option('--config <file>', 'config file (default: rn-workflows.json)')
+  .action(async (opts: IosOptions) => {
+    await runIosImport(opts, connect(process.cwd(), opts.repo), process.cwd());
+  });
+
+program
+  .command('status')
+  .description('Show which signing credentials each profile has, and what expires when.')
+  .option('--profile <name>', 'only this profile (default: every profile in the config file)')
+  .option('--check', 'exit with an error when something is incomplete or expired')
+  .option('--repo <owner/name>', 'GitHub repository (default: the origin remote)')
+  .option('--config <file>', 'config file (default: rn-workflows.json)')
+  .action(async (opts: StatusOptions & { check?: boolean }) => {
+    const problems = await runStatus(opts, connect(process.cwd(), opts.repo), process.cwd());
+    if (opts.check && problems > 0) {
+      throw new UserError(`${problems} problem${problems === 1 ? '' : 's'} found.`);
+    }
+  });
 
 const ci = program.command('ci').description('Commands run by the shared workflow inside CI.');
 
@@ -197,6 +262,10 @@ ci.command('cleanup')
 try {
   await program.parseAsync();
 } catch (e) {
+  if (e instanceof Error && e.name === 'ExitPromptError') {
+    console.error('Cancelled.');
+    process.exit(130);
+  }
   if (e instanceof UserError) {
     // ::error:: makes the message an annotation on the run; harmless locally.
     console.error(`::error::${e.message.replaceAll('\n', '%0A')}`);
