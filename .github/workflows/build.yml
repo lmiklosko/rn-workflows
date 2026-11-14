@@ -190,7 +190,7 @@ jobs:
     runs-on: ${{ fromJSON(needs.resolve.outputs.android-runner) }}
     # Empty for an unsigned build, which then runs without any environment.
     environment: ${{ needs.resolve.outputs.environment }}
-    timeout-minutes: 90
+    timeout-minutes: 120
     outputs:
       artifact: ${{ steps.artifact.outputs.name }}
     env:
@@ -204,7 +204,7 @@ jobs:
       # A release build compiles native code for four ABIs and fills the ~14 GB
       # a standard hosted runner has free. Toolchains an Expo build never uses
       # are removed first, which frees roughly 20 GB more.
-      - name: Free disk space
+      - name: Free disk space and add swap
         if: runner.environment == 'github-hosted' && runner.os == 'Linux'
         working-directory: .
         run: |
@@ -220,6 +220,16 @@ jobs:
             /usr/local/share/boost
           sudo docker image prune --all --force > /dev/null 2>&1 || true
           df -h / | tail -1
+          # Gradle, the Kotlin daemon, R8 and parallel native linking together
+          # can exhaust the runner's 16 GB; without swap the VM stops responding
+          # and the job is lost with no log. Add 8 GB on the temporary disk.
+          if [ -d /mnt ] && ! sudo swapon --show | grep -q /mnt/rnw.swap; then
+            sudo fallocate -l 8G /mnt/rnw.swap
+            sudo chmod 600 /mnt/rnw.swap
+            sudo mkswap /mnt/rnw.swap > /dev/null
+            sudo swapon /mnt/rnw.swap
+          fi
+          free -h
 
       - name: Checkout
         uses: actions/checkout@v4
