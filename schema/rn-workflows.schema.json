@@ -103,7 +103,7 @@
         }
       },
       "additionalProperties": false,
-      "description": "Shell commands run inside the build job, from the working directory."
+      "description": "Shell commands run inside the build job, from the working directory. They run in both platform jobs; RNW_PLATFORM is `android` or `ios`."
     },
     "profiles": {
       "type": "object",

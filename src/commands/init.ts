@@ -115,11 +115,13 @@ export interface InitOptions {
   profiles?: string;
   yes?: boolean;
   skipCredentials?: boolean;
+  filesOnly?: boolean;
 }
 
-export async function runInit(options: InitOptions, github: GitHub, cwd: string): Promise<void> {
+/** `github` is null for --files-only: local files are written and GitHub is left alone. */
+export async function runInit(options: InitOptions, github: GitHub | null, cwd: string): Promise<void> {
   const interactive = !options.yes && process.stdin.isTTY === true;
-  console.log(`Setting up rn-workflows for ${github.slug}\n`);
+  console.log(github ? `Setting up rn-workflows for ${github.slug}\n` : 'Writing rn-workflows files (nothing on GitHub is changed)\n');
 
   // 1. Where the app is.
   let appDir = options.appDir;
@@ -175,6 +177,12 @@ export async function runInit(options: InitOptions, github: GitHub, cwd: string)
 
   if (ensureGitignored(cwd, `${CREDENTIALS_DIR}/`)) console.log(`Added ${CREDENTIALS_DIR}/ to .gitignore`);
 
+  if (!github) {
+    console.log('\nWhen the files look right, run `rn-workflows init` again without --files-only to create the');
+    console.log(`GitHub Environments (${allProfiles.join(', ')}), then add credentials per profile.`);
+    return;
+  }
+
   // 4. Environments.
   for (const name of allProfiles) {
     const environment = config.profiles?.[name]?.environment ?? name;
@@ -187,6 +195,7 @@ export async function runInit(options: InitOptions, github: GitHub, cwd: string)
     console.log('\nNext, add signing credentials per profile:');
     console.log('  rn-workflows credentials android --profile <name> --generate');
     console.log('  rn-workflows credentials ios --profile <name> --p12 <file> --mobileprovision <file>');
+    console.log('  rn-workflows env --profile <name> --file .env.<name>');
     console.log('and, for the stores you deliver to: credentials firebase, credentials play, credentials testflight.');
     return;
   }

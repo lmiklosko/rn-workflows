@@ -23,6 +23,7 @@ import {
   type AscOptions,
   type ServiceAccountOptions,
 } from './commands/delivery.js';
+import { runEnv, type EnvOptions } from './commands/env.js';
 import { runInit, type InitOptions } from './commands/init.js';
 import { runIosImport, type IosOptions } from './commands/ios.js';
 import { runStatus, type StatusOptions } from './commands/status.js';
@@ -43,9 +44,23 @@ program
   .option('--app-dir <dir>', 'directory of the Expo app (default: detected)')
   .option('--profiles <names>', 'comma-separated build profiles')
   .option('--skip-credentials', 'do not ask for signing credentials')
+  .option('--files-only', 'write the local files and change nothing on GitHub')
   .option('-y, --yes', 'do not prompt; use flags and defaults')
   .action(async (opts: InitOptions) => {
-    await runInit(opts, connect(process.cwd(), opts.repo), process.cwd());
+    // With --files-only GitHub is never contacted, so no login is needed either.
+    await runInit(opts, opts.filesOnly ? null : connect(process.cwd(), opts.repo), process.cwd());
+  });
+
+program
+  .command('env')
+  .description("Upload a local env file as a profile's build environment: public values as variables, the rest as one secret.")
+  .requiredOption('--profile <name>', 'build profile')
+  .requiredOption('--file <file>', 'dotenv file, e.g. .env.production')
+  .option('--dry-run', 'show what would go where without uploading')
+  .option('--repo <owner/name>', 'GitHub repository (default: the origin remote)')
+  .option('--config <file>', 'config file (default: rn-workflows.json)')
+  .action(async (opts: EnvOptions) => {
+    await runEnv(opts, connect(process.cwd(), opts.repo), process.cwd());
   });
 
 const credentials = program

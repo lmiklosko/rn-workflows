@@ -9,7 +9,9 @@ const hooks = z
     postPrebuild: z.string().optional().describe('Shell command run after `expo prebuild`.'),
     postBuild: z.string().optional().describe('Shell command run after the native build.'),
   })
-  .describe('Shell commands run inside the build job, from the working directory.');
+  .describe(
+    'Shell commands run inside the build job, from the working directory. They run in both platform jobs; RNW_PLATFORM is `android` or `ios`.',
+  );
 
 const firebase = z.strictObject({
   groups: z.array(z.string()).optional().describe('Tester group aliases to notify.'),

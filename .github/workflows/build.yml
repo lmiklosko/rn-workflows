@@ -195,6 +195,8 @@ jobs:
       artifact: ${{ steps.artifact.outputs.name }}
     env:
       RNW_PLAN: ${{ needs.resolve.outputs.plan }}
+      # Hooks run in both platform jobs; this tells them which one they are in.
+      RNW_PLATFORM: android
     defaults:
       run:
         working-directory: ${{ needs.resolve.outputs.working-directory }}
@@ -312,6 +314,7 @@ jobs:
       bundle-id: ${{ steps.deliver.outputs.bundle-id }}
     env:
       RNW_PLAN: ${{ needs.resolve.outputs.plan }}
+      RNW_PLATFORM: ios
       # Without it CocoaPods aborts with "Unicode Normalization not appropriate
       # for ASCII-8BIT".
       LANG: en_US.UTF-8

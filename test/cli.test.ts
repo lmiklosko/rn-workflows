@@ -403,3 +403,53 @@ describe('init', () => {
     await expect(runInit({ yes: true }, fake.github, dir)).rejects.toThrow(/No Expo app found/);
   });
 });
+
+describe('env', async () => {
+  const { runEnv, splitEnv, toDotenv } = await import('../src/commands/env.js');
+  const { parseDotenv } = await import('../src/ci/env.js');
+
+  it('sorts entries into variables, secrets and things the workflow handles itself', () => {
+    const split = splitEnv(
+      {
+        EXPO_PUBLIC_API_URL: 'https://api',
+        SENTRY_AUTH_TOKEN: 'tok',
+        BUILD_NUMBER: '5',
+        ANDROID_KEYSTORE_PASSWORD: 'x',
+        ANDROID_KEY_ALIAS: 'key0',
+        NODE_ENV: 'production',
+        EXPO_PUBLIC_EMPTY: '',
+      },
+      ['EXPO_PUBLIC_*'],
+    );
+    expect(split.variables).toEqual({ EXPO_PUBLIC_API_URL: 'https://api' });
+    expect(split.secrets).toEqual({ SENTRY_AUTH_TOKEN: 'tok' });
+    expect(split.skipped.map((s) => s.name)).toEqual(['BUILD_NUMBER', 'ANDROID_KEYSTORE_PASSWORD', 'ANDROID_KEY_ALIAS', 'NODE_ENV', 'EXPO_PUBLIC_EMPTY']);
+  });
+
+  it('writes dotenv that reads back identically', () => {
+    const entries = { A: 'plain', B: 'has "quotes" and \\ slash', C: 'two\nlines', D: 'x # not a comment' };
+    expect(parseDotenv(toDotenv(entries))).toEqual(entries);
+  });
+
+  it('uploads public values as variables and the rest as APP_ENV, printing names only', async () => {
+    const fake = await fakeGitHub();
+    const file = path.join(dir, '.env.staging');
+    fs.writeFileSync(file, 'EXPO_PUBLIC_API_URL=https://api.stage\nSENTRY_AUTH_TOKEN=s3cret\nBUILD_NUMBER=1\n');
+
+    await runEnv({ profile: 'staging', file, dryRun: true }, fake.github, dir);
+    expect(fake.environments.size).toBe(0);
+
+    await runEnv({ profile: 'staging', file }, fake.github, dir);
+    expect(fake.variables('staging')).toEqual({ EXPO_PUBLIC_API_URL: 'https://api.stage' });
+    expect(parseDotenv(fake.secrets('staging').APP_ENV!)).toEqual({ SENTRY_AUTH_TOKEN: 's3cret' });
+    expect(logged()).toContain('As the APP_ENV secret: SENTRY_AUTH_TOKEN');
+    expect(logged()).not.toContain('s3cret');
+  });
+
+  it('writes files without touching GitHub when asked', async () => {
+    fs.writeFileSync(path.join(dir, 'app.json'), JSON.stringify({ expo: {} }));
+    await runInit({ yes: true, filesOnly: true, profiles: 'staging,production' }, null, dir);
+    expect(fs.existsSync(path.join(dir, 'rn-workflows.json'))).toBe(true);
+    expect(fs.existsSync(path.join(dir, '.github/workflows/mobile-build.yml'))).toBe(true);
+  });
+});
