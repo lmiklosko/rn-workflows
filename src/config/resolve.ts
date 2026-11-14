@@ -126,7 +126,7 @@ function applyDeliverOverride(base: DeliverConfig, only: DeliveryTarget[]): Deli
   const result: DeliverConfig = {};
   if (only.includes('firebase')) result.firebase = base.firebase ?? {};
   if (only.includes('testflight')) result.testflight = base.testflight ?? {};
-  if (only.includes('play')) result.play = base.play ?? { track: 'internal' };
+  if (only.includes('play')) result.play = base.play ?? { track: 'internal', status: 'completed' };
   if (base.submitForReview !== undefined) result.submitForReview = base.submitForReview;
   return result;
 }
@@ -179,9 +179,12 @@ export function resolvePlan({ config, hasConfigFile, inputs, runNumber }: Resolv
     deliver = {};
   }
 
-  if (deliver.submitForReview && !deliver.testflight && !deliver.play) {
+  // Refused, not ignored: a release pipeline that quietly skips a submission
+  // someone asked for is worse than one that says it cannot do it yet.
+  if (deliver.submitForReview) {
     throw new ConfigError(
-      'submitForReview is set, but neither testflight nor play delivery is enabled for this build.',
+      'Submitting to App Review is not available yet. Remove submitForReview (or set it to false) and submit from App Store Connect. ' +
+        'For Google Play, use "track": "production" to send a release for review.',
     );
   }
 
@@ -196,6 +199,9 @@ export function resolvePlan({ config, hasConfigFile, inputs, runNumber }: Resolv
   const androidOutputs: AndroidOutput[] = signing
     ? [...new Set(profile?.android?.outputs ?? (['apk', 'aab'] as const))]
     : ['apk'];
+  // Each store takes one format: Firebase testers install an APK, Play takes a bundle.
+  if (deliver.firebase && !androidOutputs.includes('apk')) androidOutputs.push('apk');
+  if (deliver.play && !androidOutputs.includes('aab')) androidOutputs.push('aab');
 
   const variantValue = profile?.variant;
 

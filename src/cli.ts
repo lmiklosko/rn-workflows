@@ -12,13 +12,21 @@ import {
   patchVersionCode,
   removeAndroidCredentials,
 } from './ci/android.js';
+import { deliverAndroid, deliverIos, readAscKey, type DeliveryReport } from './ci/deliver.js';
 import { collectEnv } from './ci/env.js';
 import { installIosCredentials, readIosState, removeIosCredentials, xcodeVersion } from './ci/ios.js';
 import { runResolve, toOutputs } from './ci/resolve.js';
 import { runAndroidCredentials, type AndroidOptions } from './commands/android.js';
+import {
+  runAscCredentials,
+  runServiceAccountCredentials,
+  type AscOptions,
+  type ServiceAccountOptions,
+} from './commands/delivery.js';
 import { runInit, type InitOptions } from './commands/init.js';
 import { runIosImport, type IosOptions } from './commands/ios.js';
 import { runStatus, type StatusOptions } from './commands/status.js';
+import { assignTestFlightGroups } from './deliver/asc.js';
 import { UserError } from './errors.js';
 import { connect } from './github/context.js';
 
@@ -72,6 +80,32 @@ credentials
   .option('--config <file>', 'config file (default: rn-workflows.json)')
   .action(async (opts: IosOptions) => {
     await runIosImport(opts, connect(process.cwd(), opts.repo), process.cwd());
+  });
+
+for (const [target, what] of [['firebase', 'Firebase App Distribution'], ['play', 'Google Play']] as const) {
+  credentials
+    .command(target)
+    .description(`Store the service account key used to deliver to ${what}.`)
+    .requiredOption('--profile <name>', 'build profile')
+    .requiredOption('--service-account <file>', 'service account key file (JSON) from Google Cloud')
+    .option('--repo <owner/name>', 'GitHub repository (default: the origin remote)')
+    .option('--config <file>', 'config file (default: rn-workflows.json)')
+    .action(async (opts: ServiceAccountOptions) => {
+      await runServiceAccountCredentials(target, opts, connect(process.cwd(), opts.repo), process.cwd());
+    });
+}
+
+credentials
+  .command('testflight')
+  .description('Store the App Store Connect API key used to upload to TestFlight.')
+  .requiredOption('--profile <name>', 'build profile')
+  .requiredOption('--key <file>', 'API key file, AuthKey_<ID>.p8')
+  .option('--key-id <id>', 'key ID (default: read from the file name)')
+  .option('--issuer-id <uuid>', 'issuer ID; or APP_STORE_CONNECT_API_ISSUER_ID')
+  .option('--repo <owner/name>', 'GitHub repository (default: the origin remote)')
+  .option('--config <file>', 'config file (default: rn-workflows.json)')
+  .action(async (opts: AscOptions) => {
+    await runAscCredentials(opts, connect(process.cwd(), opts.repo), process.cwd());
   });
 
 program
@@ -246,6 +280,56 @@ ci.command('ios-export-options')
     const method = exportMethodFor(profile.exportMethod, xcodeVersion());
     fs.writeFileSync(opts.out, buildExportOptions({ method, teamId: profile.teamId, bundleId, profileName: profile.name }));
     console.log(`Export method ${method} for ${bundleId}.`);
+  });
+
+/** A configured target that could not run is a warning on the run, not a failure. */
+function reportDelivery(platform: string, report: DeliveryReport): void {
+  for (const { target, reason } of report.skipped) {
+    warn(`${platform}: ${target} delivery was skipped: ${reason}.`);
+  }
+  if (!report.delivered.length && !report.skipped.length) console.log('No delivery is configured for this platform.');
+  setOutputs({ delivered: report.delivered.join(','), 'testflight-uploaded': String(report.delivered.includes('testflight')) });
+}
+
+ci.command('deliver-android')
+  .description('Send the Android build to the delivery targets of the plan (Firebase App Distribution, Google Play).')
+  .option('--dir <dir>', 'Expo app directory', process.cwd())
+  .action(async (opts: { dir: string }) => {
+    reportDelivery('Android', await deliverAndroid(readPlan(), path.resolve(opts.dir), scratchDir(), process.env));
+  });
+
+ci.command('deliver-ios')
+  .description('Send the iOS build to the delivery targets of the plan (Firebase App Distribution, TestFlight).')
+  .option('--dir <dir>', 'Expo app directory', process.cwd())
+  .action(async (opts: { dir: string }) => {
+    reportDelivery('iOS', await deliverIos(readPlan(), path.resolve(opts.dir), scratchDir(), process.env));
+    // The TestFlight groups job runs on another machine and needs to know the app.
+    setOutputs({ 'bundle-id': process.env.RNW_IOS_BUNDLE_ID ?? '' });
+  });
+
+ci.command('testflight-groups')
+  .description('Wait for Apple to process the uploaded build, then add it to the TestFlight groups of the plan.')
+  .action(async () => {
+    const plan = readPlan();
+    const groups = plan.deliver.testflight?.groups ?? [];
+    if (!groups.length) {
+      console.log('No TestFlight groups are configured.');
+      return;
+    }
+    const key = readAscKey(process.env);
+    if (typeof key === 'string') throw new UserError(`Cannot assign TestFlight groups: ${key}.`);
+    const bundleId = process.env.RNW_IOS_BUNDLE_ID;
+    if (!bundleId) throw new UserError('RNW_IOS_BUNDLE_ID is not set.');
+
+    const result = await assignTestFlightGroups({
+      key,
+      bundleId,
+      buildNumber: String(plan.buildNumber),
+      version: process.env.RNW_VERSION || null,
+      groups,
+      log: (message) => console.log(message),
+    });
+    console.log(`Build ${plan.buildNumber} was added to: ${result.groups.join(', ')}.`);
   });
 
 ci.command('cleanup')

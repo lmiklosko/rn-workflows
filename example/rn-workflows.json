@@ -2,6 +2,14 @@
   "$schema": "../schema/rn-workflows.schema.json",
   "workingDirectory": "example",
   "profiles": {
-    "e2e": {}
+    "e2e": {
+      "deliver": {
+        "firebase": {
+          "groups": [
+            "qa"
+          ]
+        }
+      }
+    }
   }
 }

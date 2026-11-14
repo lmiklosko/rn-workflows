@@ -321,7 +321,7 @@ describe('status', () => {
     await fake.github.setSecrets('Dev', { ANDROID_KEYSTORE_BASE64: 'x' });
 
     expect(await runStatus({}, fake.github, dir)).toBe(1);
-    expect(logged()).toContain('Profile Dev\n  Android INCOMPLETE, missing ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_ALIAS\n  iOS     not set up');
+    expect(logged()).toContain('Profile Dev\n  Android  INCOMPLETE, missing ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_ALIAS\n  iOS      not set up\n  Delivery no targets set up');
     expect(logged()).toContain('Profile PROD (environment Production)\n  environment does not exist yet');
   });
 });

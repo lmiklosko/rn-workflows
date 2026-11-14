@@ -2,7 +2,7 @@
 
 One shared GitHub Actions pipeline for building, signing and distributing Expo apps, plus a CLI that sets up the credentials each app repo needs.
 
-**Status: work in progress. Builds and signing work; distribution is not built yet.**
+**Status: work in progress. Builds, signing and delivery are implemented; delivery has not yet run against real store accounts.**
 
 ## What works today
 
@@ -10,7 +10,11 @@ One shared GitHub Actions pipeline for building, signing and distributing Expo a
 - Signing without changes to the app's source: credentials come from GitHub Environment secrets, and the generated native projects are patched during the build.
 - A CLI that sets a repository up and manages those credentials.
 
-Not built yet: uploads to TestFlight, Firebase App Distribution and Google Play; release attachments and notifications; creating iOS certificates through the App Store Connect API. A signed iOS archive has not yet been run with Apple-issued credentials.
+- Delivery to Firebase App Distribution, TestFlight (with tester groups) and Google Play.
+
+Not built yet: submitting to App Review, release attachments and notifications, creating iOS certificates through the App Store Connect API.
+
+Not yet run against real accounts: a signed iOS archive with Apple-issued credentials, and every delivery target. Those paths are covered by tests against stand-in APIs only.
 
 ## Set up an app repository
 
@@ -43,6 +47,47 @@ rn-workflows status
 - `--generate` keeps the only recoverable copy of the keystore and its password under `.credentials/`, which is git-ignored. Move it to a password manager.
 - The iOS command takes either file alone, so a renewed provisioning profile can be uploaded on its own. It is checked against the certificate already on record.
 - Passwords are read from a prompt or from `ANDROID_KEYSTORE_PASSWORD` / `IOS_P12_PASSWORD`.
+
+## Delivery
+
+Each profile lists where its builds go:
+
+```json
+{
+  "profiles": {
+    "staging": {
+      "deliver": { "firebase": { "groups": ["qa"] } }
+    },
+    "production": {
+      "deliver": {
+        "testflight": { "groups": ["Internal"] },
+        "play": { "track": "internal" }
+      }
+    }
+  }
+}
+```
+
+Credentials for each target are stored per profile:
+
+```bash
+rn-workflows credentials firebase --profile staging --service-account firebase-key.json
+```
+
+```bash
+rn-workflows credentials play --profile production --service-account play-key.json
+```
+
+```bash
+rn-workflows credentials testflight --profile production --key AuthKey_ABC123DEFG.p8 --issuer-id <issuer-uuid>
+```
+
+- A target whose credentials are missing is skipped with a warning; the build still succeeds and its artifacts are kept.
+- Firebase receives the APK and, for iOS, an ad hoc, development or enterprise build. TestFlight receives App Store builds only. Which kind an iOS build is comes from its provisioning profile.
+- Firebase app IDs are read from the committed `google-services.json` and `GoogleService-Info.plist`.
+- Google Play only accepts API uploads for an app whose first build was uploaded by hand in Play Console. Use `"status": "draft"` until the app has been published once.
+- TestFlight groups are assigned in a separate Linux job that waits for Apple to process the build. External groups also need Beta App Review, which is not submitted for you.
+- The `deliver` workflow input narrows the targets for one run, for example `deliver: none`.
 
 ## Calling the workflow
 

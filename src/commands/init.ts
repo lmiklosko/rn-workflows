@@ -187,6 +187,7 @@ export async function runInit(options: InitOptions, github: GitHub, cwd: string)
     console.log('\nNext, add signing credentials per profile:');
     console.log('  rn-workflows credentials android --profile <name> --generate');
     console.log('  rn-workflows credentials ios --profile <name> --p12 <file> --mobileprovision <file>');
+    console.log('and, for the stores you deliver to: credentials firebase, credentials play, credentials testflight.');
     return;
   }
 

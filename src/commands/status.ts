@@ -2,6 +2,7 @@ import { loadConfig } from '../config/load.js';
 import type { GitHub, NamedItem, Variable } from '../github/client.js';
 import { GitHubError } from '../github/client.js';
 import { ANDROID_SIGNING_SECRETS, IOS_SIGNING_SECRETS } from '../secrets.js';
+import { deliveryStatus } from './delivery.js';
 import { listProfiles, resolveProfile, type ResolvedProfile } from './shared.js';
 
 const DAY = 24 * 60 * 60 * 1000;
@@ -109,9 +110,12 @@ export async function runStatus(options: StatusOptions, github: GitHub, cwd: str
 
     for (const [title, platform] of [['Android', 'android'], ['iOS', 'ios']] as const) {
       const status = platformStatus(platform, secrets, variables);
-      status.lines.forEach((line, index) => console.log(`  ${index === 0 ? title.padEnd(8) : ' '.repeat(8)}${line}`));
+      status.lines.forEach((line, index) => console.log(`  ${index === 0 ? title.padEnd(9) : ' '.repeat(9)}${line}`));
       problems += status.problems.length;
     }
+    const delivery = deliveryStatus(secrets, variables);
+    console.log(`  ${'Delivery'.padEnd(9)}${delivery.line}`);
+    problems += delivery.problems.length;
     console.log('');
   }
   return problems;

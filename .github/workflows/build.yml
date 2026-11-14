@@ -16,6 +16,14 @@ name: Build
 #         IOS_P12_BASE64: ${{ secrets.IOS_P12_BASE64 }}
 #         IOS_P12_PASSWORD: ${{ secrets.IOS_P12_PASSWORD }}
 #         IOS_MOBILEPROVISION_BASE64: ${{ secrets.IOS_MOBILEPROVISION_BASE64 }}
+#         FIREBASE_SERVICE_ACCOUNT_BASE64: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_BASE64 }}
+#         GOOGLE_PLAY_SERVICE_ACCOUNT_BASE64: ${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT_BASE64 }}
+#         APP_STORE_CONNECT_API_KEY_ID: ${{ secrets.APP_STORE_CONNECT_API_KEY_ID }}
+#         APP_STORE_CONNECT_API_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_API_ISSUER_ID }}
+#         APP_STORE_CONNECT_API_KEY_BASE64: ${{ secrets.APP_STORE_CONNECT_API_KEY_BASE64 }}
+#
+# `rn-workflows init` writes this list for you. A delivery target whose secrets
+# are missing is skipped with a warning; the build itself still succeeds.
 #
 # Secrets are read from the GitHub Environment named after the profile. They
 # must be passed by name as above: `secrets: inherit` is ignored when the
@@ -94,6 +102,19 @@ on:
       IOS_MOBILEPROVISION_BASE64:
         description: Provisioning profile, base64-encoded. Its type decides the export method.
         required: false
+      FIREBASE_SERVICE_ACCOUNT_BASE64:
+        description: Service account key (JSON, base64) allowed to distribute through Firebase App Distribution.
+        required: false
+      GOOGLE_PLAY_SERVICE_ACCOUNT_BASE64:
+        description: Service account key (JSON, base64) with release access to the app in Play Console.
+        required: false
+      APP_STORE_CONNECT_API_KEY_ID:
+        required: false
+      APP_STORE_CONNECT_API_ISSUER_ID:
+        required: false
+      APP_STORE_CONNECT_API_KEY_BASE64:
+        description: App Store Connect API key (.p8, base64), used to upload to TestFlight.
+        required: false
       APP_ENV:
         description: dotenv content exported to the app's prebuild and build.
         required: false
@@ -134,6 +155,9 @@ jobs:
       android-gradle-tasks: ${{ steps.plan.outputs.android-gradle-tasks }}
       extra-artifact-paths: ${{ steps.plan.outputs.extra-artifact-paths }}
       artifact-retention-days: ${{ steps.plan.outputs.artifact-retention-days }}
+      android-deliver: ${{ steps.plan.outputs.android-deliver }}
+      ios-deliver: ${{ steps.plan.outputs.ios-deliver }}
+      testflight-groups: ${{ steps.plan.outputs.testflight-groups }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -263,6 +287,14 @@ jobs:
           if-no-files-found: error
           retention-days: ${{ needs.resolve.outputs.artifact-retention-days }}
 
+      # After the artifact upload, so a failed delivery never costs the build.
+      - name: Deliver
+        if: needs.resolve.outputs.android-deliver == 'true'
+        run: rn-workflows ci deliver-android
+        env:
+          FIREBASE_SERVICE_ACCOUNT_BASE64: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_BASE64 }}
+          GOOGLE_PLAY_SERVICE_ACCOUNT_BASE64: ${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT_BASE64 }}
+
       - name: Remove credentials
         if: always()
         run: rn-workflows ci cleanup || true
@@ -276,6 +308,8 @@ jobs:
     timeout-minutes: 120
     outputs:
       artifact: ${{ steps.artifact.outputs.name }}
+      testflight-uploaded: ${{ steps.deliver.outputs.testflight-uploaded }}
+      bundle-id: ${{ steps.deliver.outputs.bundle-id }}
     env:
       RNW_PLAN: ${{ needs.resolve.outputs.plan }}
       # Without it CocoaPods aborts with "Unicode Normalization not appropriate
@@ -441,6 +475,40 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
+      # After the artifact upload, so a failed delivery never costs the build.
+      - name: Deliver
+        id: deliver
+        if: needs.resolve.outputs.ios-deliver == 'true'
+        run: rn-workflows ci deliver-ios
+        env:
+          FIREBASE_SERVICE_ACCOUNT_BASE64: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_BASE64 }}
+          APP_STORE_CONNECT_API_KEY_ID: ${{ secrets.APP_STORE_CONNECT_API_KEY_ID }}
+          APP_STORE_CONNECT_API_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_API_ISSUER_ID }}
+          APP_STORE_CONNECT_API_KEY_BASE64: ${{ secrets.APP_STORE_CONNECT_API_KEY_BASE64 }}
+
       - name: Remove credentials
         if: always()
         run: rn-workflows ci cleanup || true
+
+  # Apple needs minutes to process an upload before it can be assigned to
+  # testers. Waiting happens here, on a Linux runner, not on the macOS one.
+  testflight-groups:
+    name: TestFlight groups
+    needs: [resolve, ios]
+    if: needs.ios.outputs.testflight-uploaded == 'true' && needs.resolve.outputs.testflight-groups == 'true'
+    runs-on: ubuntu-latest
+    environment: ${{ needs.resolve.outputs.environment }}
+    timeout-minutes: 60
+    steps:
+      - name: Install rn-workflows
+        uses: lmiklosko/rn-workflows/actions/cli@main
+
+      - name: Add the build to its groups
+        run: rn-workflows ci testflight-groups
+        env:
+          RNW_PLAN: ${{ needs.resolve.outputs.plan }}
+          RNW_IOS_BUNDLE_ID: ${{ needs.ios.outputs.bundle-id }}
+          RNW_VERSION: ${{ needs.resolve.outputs.version }}
+          APP_STORE_CONNECT_API_KEY_ID: ${{ secrets.APP_STORE_CONNECT_API_KEY_ID }}
+          APP_STORE_CONNECT_API_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_API_ISSUER_ID }}
+          APP_STORE_CONNECT_API_KEY_BASE64: ${{ secrets.APP_STORE_CONNECT_API_KEY_BASE64 }}

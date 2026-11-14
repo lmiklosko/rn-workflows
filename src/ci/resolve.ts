@@ -74,5 +74,8 @@ export function toOutputs({ plan, version }: ResolveResult): Record<string, stri
     // One glob per line, relative to the repo root, as upload-artifact expects.
     'extra-artifact-paths': plan.artifacts.map((glob) => `${wd}/${glob}`).join('\n'),
     'artifact-retention-days': String(plan.artifactRetentionDays),
+    'android-deliver': String(Boolean(plan.deliver.firebase || plan.deliver.play)),
+    'ios-deliver': String(Boolean(plan.deliver.firebase || plan.deliver.testflight)),
+    'testflight-groups': String((plan.deliver.testflight?.groups ?? []).length > 0),
   };
 }

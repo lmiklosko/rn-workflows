@@ -28,7 +28,14 @@ const testflight = z.strictObject({
 });
 
 const play = z.strictObject({
-  track: z.string().default('internal').describe('Play track the bundle is uploaded to.'),
+  track: z
+    .string()
+    .default('internal')
+    .describe('Play track the bundle is uploaded to. `production` sends it to Google for review.'),
+  status: z
+    .enum(['completed', 'draft'])
+    .default('completed')
+    .describe('`completed` releases on the track. An app that was never published only accepts `draft`.'),
 });
 
 const deliver = z.strictObject({
@@ -38,7 +45,7 @@ const deliver = z.strictObject({
   submitForReview: z
     .boolean()
     .optional()
-    .describe('Submit the uploaded store build for review. Off by default.'),
+    .describe('Submit the TestFlight build to App Review. Not available yet: setting it to true is rejected.'),
 });
 
 const androidOutput = z.enum(['apk', 'aab']);

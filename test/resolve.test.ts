@@ -107,7 +107,7 @@ describe('resolvePlan', () => {
   it('delivers a requested but unconfigured target with defaults', () => {
     expect(resolve({ profile: 'Dev', deliver: 'play, firebase' }).deliver).toEqual({
       firebase: { groups: ['qa'] },
-      play: { track: 'internal' },
+      play: { track: 'internal', status: 'completed' },
     });
   });
 
@@ -115,9 +115,9 @@ describe('resolvePlan', () => {
     expect(() => resolve({ deliver: 'firebase' })).toThrow(/Unsigned builds cannot be distributed/);
   });
 
-  it('applies submit-for-review only where a store target exists', () => {
-    expect(resolve({ profile: 'PROD', submitForReview: 'true' }).deliver.submitForReview).toBe(true);
-    expect(() => resolve({ profile: 'Dev', submitForReview: 'true' })).toThrow(/submitForReview/);
+  it('accepts submit-for-review only as false, since submission is not built yet', () => {
+    expect(resolve({ profile: 'PROD', submitForReview: 'false' }).deliver.submitForReview).toBe(false);
+    expect(() => resolve({ profile: 'PROD', submitForReview: 'true' })).toThrow(/not available yet/);
   });
 
   it.each([
